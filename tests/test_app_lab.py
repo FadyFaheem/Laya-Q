@@ -1,0 +1,67 @@
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+import threading
+import unittest
+from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+
+def load_app():
+    spec = importlib.util.spec_from_file_location("laya_app", "app_lab/laya_status/python/main.py")
+    module = importlib.util.module_from_spec(spec)
+    with patch.dict("sys.modules", {"arduino": MagicMock(), "arduino.app_utils": MagicMock()}):
+        spec.loader.exec_module(module)
+    return module
+
+
+class AppLabTests(unittest.TestCase):
+    def test_split_checkpoint_assembly_and_checksum(self):
+        app = load_app()
+        with tempfile.TemporaryDirectory(dir=".") as folder:
+            root = Path(folder)
+            app.SOURCE_MODEL = root / "source"
+            app.MODEL = root / "assembled"
+            parts = app.SOURCE_MODEL / "parts"
+            parts.mkdir(parents=True)
+            (parts / "0000.bin").write_bytes(b"first")
+            (parts / "0001.bin").write_bytes(b"second")
+            app.WEIGHTS_SHA256 = hashlib.sha256(b"firstsecond").hexdigest()
+            for filename in ("rl_agent_config.json", "encoder/config.json",
+                             "tokenizer/tokenizer_config.json", "tokenizer/tokenizer.json"):
+                path = app.SOURCE_MODEL / filename
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}")
+            app.prepare_model()
+            self.assertEqual((app.MODEL / "model.safetensors").read_bytes(), b"firstsecond")
+            (app.MODEL / "model.safetensors").unlink()
+            (parts / "0001.bin").write_bytes(b"corrupted")
+            with self.assertRaisesRegex(ValueError, "checksum"):
+                app.prepare_model()
+            self.assertFalse((app.MODEL / "model.safetensors").exists())
+
+    def test_http_prediction_and_bad_request(self):
+        app = load_app()
+        app.AGENT = MagicMock()
+        app.AGENT.predict.return_value = {"answers": {"department": "billing"}}
+        app.status = MagicMock()
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            endpoint = f"http://127.0.0.1:{server.server_port}/predict"
+            request = Request(endpoint, data=json.dumps({"state": "refund", "questions": {"q": {}}}).encode())
+            with urlopen(request) as response:
+                self.assertEqual(json.load(response)["answers"]["department"], "billing")
+            with self.assertRaises(HTTPError) as failure:
+                urlopen(Request(endpoint, data=b"{}"))
+            self.assertEqual(failure.exception.code, 400)
+            failure.exception.close()
+            app.AGENT.predict.assert_called_once_with("refund", {"q": {}})
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()

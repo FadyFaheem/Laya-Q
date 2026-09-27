@@ -1,0 +1,31 @@
+name: Release App Lab bundle
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check Python sources
+        run: python -m compileall -q laya_q.py board_worker.py status_bridge.py app_lab/laya_status/python/main.py scripts/build_app_lab.py
+      - name: Verify protocol and App Lab API
+        run: python -m unittest discover -s tests -v
+      - name: Build importable App Lab ZIP
+        run: python scripts/build_app_lab.py Laya-Q-App-Lab.zip
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" Laya-Q-App-Lab.zip \
+            --title "Laya Q ${GITHUB_REF_NAME}" \
+            --generate-notes

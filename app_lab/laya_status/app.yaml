@@ -1,0 +1,6 @@
+name: Laya Q
+description: Run Laya on the UNO Q and show requests on its LED matrix.
+icon: 💙
+ports:
+  - 8765
+bricks: []
