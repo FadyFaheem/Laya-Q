@@ -142,6 +142,10 @@ python scripts/build_app_lab.py Laya-Q-Offline-App-Lab.zip --include-model
 
 The offline builder resolves the current public model revision, downloads its matching support files, and generates verification metadata for that bundle. No checkpoint hash is fixed in source code. `--weights-file <path>` can reuse existing weights if they match the current Hub revision. The builder includes only an explicit list of project files. Model weights and generated ZIPs are ignored by Git. An upstream change to the model's architecture or format may still require a compatible Laya runtime update.
 
-CI runs on pushes to `main` and pull requests. The release workflow publishes `Laya-Q-App-Lab.zip` when a version tag such as `v0.1.0` is pushed. It uses GitHub's built-in workflow token.
+CI runs Python checks and tests, builds the small App Lab ZIP, and saves it as a downloadable Actions artifact on pushes to `main` and pull requests.
+
+The release workflow automatically tests, builds, and publishes `Laya-Q-App-Lab.zip` on pushes to `main`. Automatic releases use tags such as `build-12-abc1234`, identifying the workflow run and source commit. You can also push a version tag such as `v0.1.0`, or open **Actions > Release App Lab bundle > Run workflow** on `main`. Failed tests or builds prevent publication. Rerunning a completed release leaves its published assets unchanged.
+
+Get the ZIP from the [latest release](https://github.com/FadyFaheem/Laya-Q/releases/latest). Releases contain no model weights or credentials; model installation still downloads on the computer and transfers over USB. Publishing uses GitHub's built-in workflow token, so no personal or Hugging Face secret is required. App Lab compiles the included STM32 sketch when you run the imported app.
 
 Sources: [Arduino UNO Q user manual](https://docs.arduino.cc/tutorials/uno-q/user-manual/), [Arduino App Lab shell implementation](https://github.com/arduino/arduino-app-lab/blob/al-0.5.0/standalone-apps/app-lab-desktop/internal/terminal/terminal.go), [Laya model card](https://huggingface.co/convaiinnovations/laya).

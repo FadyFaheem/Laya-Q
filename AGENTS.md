@@ -25,7 +25,7 @@ These instructions apply throughout this repository. Read `README.md` and the re
 | `scripts/build_app_lab.py` | Public model download, checksum verification, and App Lab ZIP packaging |
 | `examples/triage.json` | Example request used for board smoke checks |
 | `tests/` | Host protocol, HTTP API, and checkpoint assembly tests |
-| `.github/workflows/` | CI on main/PRs and releases on version tags |
+| `.github/workflows/` | CI builds on main/PRs; automatic releases on main, version tags, or manual dispatch |
 
 The source folder name `laya_status` is historical: it now contains the full inference app, not just a status companion.
 
@@ -61,7 +61,7 @@ Both transports accept a JSON object containing `state` (string, object, or list
 
 - Keep the `laya_status` RPC contract synchronized across Python and the sketch: 0 idle, 1 receiving, 2 working, 3 success, 4 error.
 - Current visuals are a filled heart with an eased double beat, incoming arrow, scanning line, check, and flashing X respectively. Editable icon rows must have 13 columns and 8 rows.
-- The matrix uses 3-bit grayscale (0?7). Keep ordinary status pixels at 7; idle blends three heart sizes at roughly 30 frames per second.
+- The matrix uses 3-bit grayscale (0 to 7). Keep ordinary status pixels at 7; idle blends three heart sizes at roughly 30 frames per second.
 - Matrix animation runs on the STM32. Keep updates responsive; avoid long blocking delays in the sketch.
 - `Arduino_LED_Matrix` comes with the tested `arduino:zephyr` platform. Adding it as a separately installed library caused App Lab library resolution failures.
 - Discover the board with ADB; do not hardcode a developer's device serial. `--serial` belongs before the CLI subcommand. `find_adb()` can locate App Lab's bundled ADB on Windows.
@@ -88,7 +88,7 @@ Both transports accept a JSON object containing `state` (string, object, or list
 - The builder includes explicit file allowlists, not the entire working directory. Update those lists intentionally when release contents change.
 - Bundles containing weights include the upstream model's Apache 2.0 license. Keep its attribution and license when changing packaging.
 - Build the small default ZIP with `python scripts/build_app_lab.py Laya-Q-App-Lab.zip`. Use `--include-model` for an offline model bundle. `--weights-file <path>` also selects an offline bundle and checks those weights against current Hub metadata; metadata and license downloads still require network access.
-- The release workflow publishes the ZIP when a `v*` tag is pushed, using GitHub's built-in token. Make commits, pushes, tags, and releases only as requested by the user; preserve unrelated working changes.
+- The release workflow tests, builds, and publishes the small ZIP on pushes to `main`, pushes of `v*` tags, and manual dispatch on main or a version tag. Main releases use `build-<run-number>-<short-sha>` tags and target the exact tested commit. CI also saves build artifacts for PR review. Use GitHub's built-in token, preserve the test gate, and do not replace published assets on reruns. Pushing main now publishes a release automatically. Make commits, pushes, tags, and releases only as requested by the user; preserve unrelated working changes.
 
 ## Verification and reporting
 

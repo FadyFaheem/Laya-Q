@@ -11,6 +11,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,3 +19,12 @@ jobs:
           python-version: '3.11'
       - run: python -m compileall -q laya_q.py model_download.py web_portal.py board_worker.py status_bridge.py app_lab/laya_status/python/main.py scripts/build_app_lab.py
       - run: python -m unittest discover -s tests -v
+      - name: Build small App Lab bundle
+        run: python scripts/build_app_lab.py Laya-Q-App-Lab.zip
+      - name: Save bundle for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: Laya-Q-App-Lab
+          path: Laya-Q-App-Lab.zip
+          if-no-files-found: error
+          retention-days: 14
