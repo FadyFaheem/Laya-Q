@@ -2,7 +2,21 @@
 
 This project runs the [Laya English checkpoint](https://huggingface.co/convaiinnovations/laya) on the UNO Q's **Linux processor**. Your computer sends requests and receives results over USB using ADB. The STM32 drives the onboard **8×13 LED matrix** to show request status.
 
-Laya answers typed `choice`, `score`, and yes/no questions about a supplied state. It is not a chat text generator. This starter uses the English checkpoint in CPU mode. A UNO Q with 4 GB RAM is recommended; inference speed on this board has not been benchmarked.
+Laya answers typed `choice`, `score`, and yes/no questions about a supplied state. It is not a chat text generator. This starter uses the English checkpoint in CPU mode. A UNO Q with 4 GB RAM is recommended; see the [UNO Q performance measurements](docs/uno-q-performance.md) for CPU settings, compact criteria, and experimental INT8 results.
+
+## CPU runtime
+
+The default runtime uses **INT8 encoder linear layers with FP32 decision layers**,
+four CPU threads, and PyTorch 2.14.0. Quantization and a synthetic warmup happen
+once at startup; the original safetensors file stays unchanged. On the tested
+email, larger criteria took about 14.6 seconds after the first INT8 call, versus
+42 seconds in FP32. Results can differ with quantization; these timings are not
+a broad accuracy evaluation. See the [measurement details](docs/uno-q-performance.md).
+
+For FP32 fallback, set `LAYA_PRECISION=fp32` in the board process environment, or
+change `DEFAULT_PRECISION` to `"fp32"` in the app's `python/laya_runtime.py` and
+restart it. `/health` reports the active precision and PyTorch version. The
+shared source for both app and direct worker is the root `laya_runtime.py`.
 
 ## Requirements
 
@@ -34,7 +48,7 @@ If more than one ADB device is attached, supply `--serial` before the subcommand
 python laya_q.py --serial 116087906 setup
 ```
 
-Setup copies the worker to `/home/arduino/laya-q`, creates a private virtual environment, installs CPU-only PyTorch 2.9.1 and `laya==0.3.20`, and loads the transferred checkpoint from `/home/arduino/laya-q/model`. Python dependencies are installed on the board; model downloads always use your computer's connection. The first setup may take a while. The script downloads the official `get-pip.py` bootstrap into that virtual environment because the stock UNO Q Python image may lack Debian's `python3.13-venv` package. PyTorch 2.10 crashed with an illegal instruction on the tested UNO Q, so the installer pins 2.9.1. Board model loading is forced offline to prevent slow fallback downloads.
+Setup copies the worker to `/home/arduino/laya-q`, creates a private virtual environment, installs CPU-only PyTorch 2.14.0 and `laya==0.3.20`, and loads the transferred checkpoint from `/home/arduino/laya-q/model`. Python dependencies are installed on the board; model downloads always use your computer's connection. The first setup may take a while. The script downloads the official `get-pip.py` bootstrap into that virtual environment because the stock UNO Q Python image may lack Debian's `python3.13-venv` package. The official PyTorch 2.14.0 ARM64 CPU wheel passed full-model tests on the UNO Q; 2.9.1 remains the tested rollback version. The upgrade alone did not improve inference speed (see the performance measurements above). Board model loading is forced offline to prevent slow fallback downloads.
 
 To transfer the checkpoint without loading it immediately, run `python laya_q.py setup --skip-warmup`. If the checkpoint is missing, the worker asks you to install it from the computer; it never downloads a model on the UNO Q.
 

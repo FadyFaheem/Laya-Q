@@ -22,17 +22,16 @@ class FakeStatus:
 
 class ProtocolTests(unittest.TestCase):
     def test_worker_requires_local_weights_and_loads_offline(self):
-        laya = Mock()
         with tempfile.TemporaryDirectory() as folder, \
              patch.object(board_worker, "LOCAL_MODEL", folder), \
-             patch.dict(board_worker.sys.modules, {"laya": laya}), \
+             patch.object(board_worker, "load_cpu_agent") as loader, \
              patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(FileNotFoundError, "on your computer"):
                 board_worker.load_agent()
-            laya.load.assert_not_called()
+            loader.assert_not_called()
             (Path(folder) / "model.safetensors").write_bytes(b"test")
             board_worker.load_agent()
-            laya.load.assert_called_once_with(folder, device="cpu")
+            loader.assert_called_once_with(folder)
             self.assertEqual(os.environ["HF_HUB_OFFLINE"], "1")
             self.assertEqual(os.environ["TRANSFORMERS_OFFLINE"], "1")
 

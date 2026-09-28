@@ -7,6 +7,7 @@ import sys
 import time
 
 from status_bridge import StatusBridge
+from laya_runtime import load_cpu_agent
 
 
 PREFIX = "LAYA_Q_RESPONSE "
@@ -26,9 +27,7 @@ def load_agent():
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     if not os.path.isfile(os.path.join(LOCAL_MODEL, "model.safetensors")):
         raise FileNotFoundError("Model not installed. Run python laya_q.py setup on your computer first.")
-    import laya
-
-    return laya.load(LOCAL_MODEL, device="cpu")
+    return load_cpu_agent(LOCAL_MODEL)
 
 
 def run(agent, input_stream, status=None):

@@ -20,4 +20,6 @@ class BundleTests(unittest.TestCase):
             with zipfile.ZipFile(output) as archive:
                 self.assertIn("python/model_download.py", archive.namelist())
                 self.assertIn("tools/model_download.py", archive.namelist())
+                self.assertEqual(archive.read("python/laya_runtime.py"), Path("laya_runtime.py").read_bytes())
+                self.assertIn("tools/laya_runtime.py", archive.namelist())
                 self.assertFalse(any(name.startswith("model/") for name in archive.namelist()))

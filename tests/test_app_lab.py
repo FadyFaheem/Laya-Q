@@ -66,6 +66,7 @@ class AppLabTests(unittest.TestCase):
     def test_http_prediction_and_bad_request(self):
         app = load_app()
         app.AGENT = MagicMock()
+        app.AGENT.laya_q_runtime = {"precision": "int8", "torch": "2.14.0+cpu"}
         app.AGENT.predict.return_value = {"answers": {"department": "billing"}}
         app.status = MagicMock()
         server = app.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
@@ -73,6 +74,10 @@ class AppLabTests(unittest.TestCase):
         thread.start()
         try:
             endpoint = f"http://127.0.0.1:{server.server_port}/predict"
+            with urlopen(f"http://127.0.0.1:{server.server_port}/health") as response:
+                health = json.load(response)
+                self.assertTrue(health["ready"])
+                self.assertEqual(health["runtime"]["precision"], "int8")
             request = Request(endpoint, data=json.dumps({"state": "refund", "questions": {"q": {}}}).encode())
             with urlopen(request) as response:
                 self.assertEqual(json.load(response)["answers"]["department"], "billing")

@@ -17,6 +17,7 @@ These instructions apply throughout this repository. Read `README.md` and the re
 | `model_download.py` | Current Hub revision resolution, snapshot downloads, dynamic verification, and cache completion checks |
 | `web_portal.py`, `portal/` | Loopback web testing portal, device selection, and browser assets |
 | `board_worker.py` | Direct Linux worker: loads Laya and handles JSON-lines requests |
+| `laya_runtime.py` | Shared offline CPU loader, INT8 encoder conversion, warmup and FP32 fallback |
 | `status_bridge.py` | Direct worker's MessagePack RPC client for STM32 status |
 | `app_lab/laya_status/app.yaml` | App Lab manifest for the full **Laya Q** app |
 | `app_lab/laya_status/python/main.py` | Persistent App Lab inference service and bundled checkpoint assembly |
@@ -72,7 +73,9 @@ Both transports accept a JSON object containing `state` (string, object, or list
 ## Dependency and checkpoint constraints
 
 - Host scripts and CI require Python 3.11+ and use the standard library. Local tests do not require Laya, PyTorch, or an attached board.
-- Keep CPU PyTorch pinned to `2.9.1+cpu` and Laya to `0.3.20` unless a deliberate upgrade is verified on hardware. PyTorch 2.10 produced an illegal-instruction crash on the tested UNO Q.
+- Keep CPU PyTorch pinned to `2.14.0+cpu` and Laya to `0.3.20` unless a deliberate upgrade is verified on hardware. The official Python 3.13 ARM64 CPU wheel of 2.14 passed full-model inference on the tested UNO Q. Version 2.10 previously crashed with an illegal instruction; 2.9.1 remains the tested rollback version. Use the official CPU index, not a CUDA build. See `docs/uno-q-performance.md`: the version upgrade alone did not improve speed.
+- Both runtimes use `laya_runtime.load_cpu_agent`: four intra-op threads, one inter-op thread, QNNPACK dynamic INT8 on encoder Linear layers only; decision layers remain FP32. The user requested INT8 as the default. Warm it with synthetic text before accepting traffic. Keep original checkpoint files intact. `LAYA_PRECISION=fp32` or the helper's `DEFAULT_PRECISION` enables fallback. App Lab health reports runtime settings. Never silently fall back if quantization fails. Quantization may affect outputs; the synthetic shipping test is not a broad accuracy guarantee.
+- The builder copies the root `laya_runtime.py` into `python/` and `tools/`; the direct installer transfers it alongside the worker. Keep these paths synchronized. Legacy `torch.ao` quantization still works in 2.14 but emits deprecation warnings; future upgrades must check the actual model, not only import success.
 - The direct installer uses `venv --without-pip` and official `get-pip.py` because the board image may lack Debian's venv package.
 - Model downloads on the board are slow. Keep them on the computer, with offline Hugging Face/Transformers loading enforced in both board runtimes. Do not reintroduce a network fallback for missing model files.
 - Do not hardcode model revisions or checkpoint hashes. `model_download.py` resolves the current upstream commit once per download and retrieves matching files. Digests in generated manifests are per-download verification data, not permanent source constants. Future weights should not require source edits merely because their hashes changed.
@@ -96,7 +99,7 @@ Run from the repository root for relevant Python changes:
 
 ```powershell
 python -m unittest discover -s tests -v
-python -m compileall -q laya_q.py model_download.py web_portal.py board_worker.py status_bridge.py app_lab/laya_status/python/main.py scripts/build_app_lab.py
+python -m compileall -q laya_q.py model_download.py laya_runtime.py web_portal.py board_worker.py status_bridge.py app_lab/laya_status/python/main.py scripts/build_app_lab.py
 ```
 
 Use tests that check observable protocol behavior, error handling, or integrity checks. Documentation-only edits need a review for accuracy, not model downloads or board tests.

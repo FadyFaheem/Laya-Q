@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from arduino.app_utils import App, Bridge
 from model_download import MANIFEST, cache_complete, file_digest, safe_path
+from laya_runtime import load_cpu_agent
 
 
 PORT = 8765
@@ -79,7 +80,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self.reply(200, {"ready": AGENT is not None})
+            runtime = getattr(AGENT, "laya_q_runtime", {}) if AGENT is not None else {}
+            self.reply(200, {"ready": AGENT is not None, "runtime": runtime})
         else:
             self.reply(404, {"error": "Use POST /predict or GET /health"})
 
@@ -119,8 +121,7 @@ def main():
     status(2)
     try:
         prepare_model()
-        import laya
-        AGENT = laya.load(str(MODEL), device="cpu")
+        AGENT = load_cpu_agent(MODEL)
     except Exception:
         status(4)
         raise

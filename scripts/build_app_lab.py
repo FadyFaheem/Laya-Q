@@ -16,9 +16,9 @@ APP = ROOT / "app_lab" / "laya_status"
 PART_SIZE = 8 * 1024 * 1024
 APP_FILES = ("app.yaml", "README.md", "python/main.py", "python/requirements.txt",
              "sketch/sketch.ino", "sketch/sketch.yaml")
-PROJECT_FILES = ("laya_q.py", "model_download.py", "board_worker.py", "status_bridge.py",
+PROJECT_FILES = ("laya_q.py", "model_download.py", "board_worker.py", "status_bridge.py", "laya_runtime.py",
                  "web_portal.py", "portal/index.html", "portal/portal.css", "portal/portal.js",
-                 "examples/triage.json", "README.md")
+                 "examples/triage.json", "README.md", "docs/uno-q-performance.md")
 
 
 def main():
@@ -44,6 +44,7 @@ def main():
             for filename in PROJECT_FILES:
                 archive.write(ROOT / filename, f"tools/{filename}", compress_type=zipfile.ZIP_DEFLATED)
             archive.write(ROOT / "model_download.py", "python/model_download.py", compress_type=zipfile.ZIP_DEFLATED)
+            archive.write(ROOT / "laya_runtime.py", "python/laya_runtime.py", compress_type=zipfile.ZIP_DEFLATED)
             if include_model:
                 for entry in manifest["files"]:
                     filename = entry["path"]

@@ -16,7 +16,16 @@ python tools/laya_q.py setup --app-lab user:laya-q-app-lab
 
 Use your actual imported app ID. The host installs the original `model.safetensors` and its required tokenizer/configuration files in `.cache/model`. No fixed model revision or hash needs editing when upstream weights change. Run this command again while the app is stopped to update the installed model.
 
-The first run installs CPU PyTorch 2.9.1 and Laya 0.3.20, so the board needs internet access for Python dependencies. Model downloads always happen on the computer. If the model is missing, the app displays installation instructions instead of downloading it on the UNO Q. Allow several GB for weights and dependencies. Subsequent starts use the cached model, and predictions keep it loaded until you stop the app. Optional offline bundles include model pieces to work around App Lab's 100 MiB limit on imported files.
+The first run installs CPU PyTorch 2.14.0 and Laya 0.3.20, so the board needs internet access for Python dependencies. Model downloads always happen on the computer. If the model is missing, the app displays installation instructions instead of downloading it on the UNO Q. Allow several GB for weights and dependencies. Subsequent starts use the cached model, and predictions keep it loaded until you stop the app. Optional offline bundles include model pieces to work around App Lab's 100 MiB limit on imported files.
+
+The encoder's linear layers use INT8 QNNPACK by default; decision layers stay
+FP32. Startup converts the in-memory encoder and warms it with synthetic text
+before the HTTP service becomes ready. Original model files remain unchanged.
+To return to FP32, change `DEFAULT_PRECISION` in `python/laya_runtime.py` to
+`"fp32"` and restart (or set `LAYA_PRECISION=fp32` in the process environment).
+`GET /health` reports the active precision, PyTorch version and thread settings.
+Quantization can change decisions or confidence values; review results for your
+rules. Outlook requires no changes to use the faster board service.
 
 From the computer, use the included host tools (or the repository):
 
