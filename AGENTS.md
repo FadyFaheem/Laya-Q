@@ -14,6 +14,7 @@ These instructions apply throughout this repository. Read `README.md` and the re
 | Path | Responsibility |
 | --- | --- |
 | `laya_q.py` | Standard-library host CLI, ADB discovery, setup, host downloads, and both prediction transports |
+| `web_portal.py`, `portal/` | Loopback web testing portal, device selection, and browser assets |
 | `board_worker.py` | Direct Linux worker: loads Laya and handles JSON-lines requests |
 | `status_bridge.py` | Direct worker's MessagePack RPC client for STM32 status |
 | `app_lab/laya_status/app.yaml` | App Lab manifest for the full **Laya Q** app |
@@ -37,6 +38,8 @@ python laya_q.py predict examples/triage.json
 python laya_q.py predict requests.jsonl --jsonl
 ```
 
+Host checkpoint downloads are the default. Verify SHA256 on both computer and board, then publish the transferred weight file atomically. `--download-on-board` opts into board downloads; `--skip-warmup` skips loading after setup and still transfers weights in host mode.
+
 The worker emits exactly one `LAYA_Q_RESPONSE `-prefixed JSON response per request. Preserve this framing and the `ok`, `result`, and `error` fields. Keep diagnostic output separate from protocol responses.
 
 **App Lab:** import the release ZIP and run **Laya Q**. Its Python process keeps the model loaded and exposes `POST /predict` and `GET /health` on port 8765. The host CLI creates a temporary ADB forward and removes it after use.
@@ -48,6 +51,8 @@ python laya_q.py predict examples/triage.json --app-lab
 Use `--app-lab` while the app is running. Stop the App Lab inference app before running a separate direct worker to avoid holding two model instances in board memory. The API has no authentication and its port is also exposed on the board's network interface; preserve accurate documentation of this behavior.
 
 Both transports accept a JSON object containing `state` (string, object, or list) and a nonempty `questions` object. Preserve request validation and Laya's prediction result structure. Serialize App Lab inference with its existing lock.
+
+**Browser testing:** `python laya_q.py portal` opens a loopback-only web portal. `AppLabConnection` is shared by the CLI and portal; close its ADB forward when disconnecting or shutting down. The portal uses Python ADB, not native browser WebUSB. Keep its Host/Origin checks, JSON-only mutation endpoints, and local bind. Serve browser assets locally without CDN dependencies. No model runs in the browser or host portal.
 
 ## Matrix and board operations
 
@@ -73,7 +78,7 @@ Both transports accept a JSON object containing `state` (string, object, or list
 ## Secrets, packaging, and releases
 
 - Never put Hugging Face tokens, passwords, or personal credentials in source, Git, logs, examples, ZIPs, or board credential files. Do not repeat a supplied token in messages or command arguments.
-- The pinned model is public; ordinary downloads and release builds need no Hugging Face token. If authentication is required, preserve the CLI's temporary stdin-based token flow.
+- The pinned model is public; ordinary downloads and release builds need no Hugging Face token. `setup --hf-token` uses a masked Python prompt; interactive host downloads can prompt after authentication or rate-limit responses. Preserve `--hf-token-stdin` for automation. Never fall back to echoing a secret when masked input is unavailable.
 - Keep weights, generated ZIPs, `.build`, environments, and caches out of Git. Do not add personal request data to bundles.
 - The builder includes explicit file allowlists, not the entire working directory. Update those lists intentionally when release contents change.
 - The bundle includes the upstream model's Apache 2.0 license. Keep its attribution and license when changing packaging.
@@ -86,7 +91,7 @@ Run from the repository root for relevant Python changes:
 
 ```powershell
 python -m unittest discover -s tests -v
-python -m compileall -q laya_q.py board_worker.py status_bridge.py app_lab/laya_status/python/main.py scripts/build_app_lab.py
+python -m compileall -q laya_q.py web_portal.py board_worker.py status_bridge.py app_lab/laya_status/python/main.py scripts/build_app_lab.py
 ```
 
 Use tests that check observable protocol behavior, error handling, or integrity checks. Documentation-only edits need a review for accuracy, not model downloads or board tests.

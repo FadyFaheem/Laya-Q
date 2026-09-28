@@ -18,6 +18,8 @@ python tools/laya_q.py predict tools/examples/triage.json --app-lab
 
 The host creates a temporary ADB USB forward to port 8765. You can also use `POST /predict` with a JSON object containing `state` and `questions`, and `GET /health`. This local API has no authentication and is exposed on the board's network interface.
 
+To test in Chrome or another browser, run `python tools/laya_q.py portal` on your computer. Select the USB board and connect in the local web portal. Python handles the existing ADB USB connection; no direct browser WebUSB driver is required.
+
 Model: [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya), revision `55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851`. No Hugging Face token is included or required to load the bundled checkpoint.
 
 The upstream model is distributed under Apache 2.0. The release includes its license at `model/LICENSE`. Python dependencies retain their own licenses and are installed by App Lab.

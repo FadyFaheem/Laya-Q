@@ -1,6 +1,8 @@
 """Host-side setup and USB JSON-lines client for an Arduino UNO Q."""
 
 import argparse
+from contextlib import contextmanager
+import getpass
 import hashlib
 import json
 import os
@@ -9,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import warnings
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -58,17 +61,38 @@ def adb_run(serial, *arguments):
         raise ToolError(f"ADB command failed (exit {exc.returncode}).") from exc
 
 
-def check_device(serial):
+def list_devices():
     try:
         result = subprocess.run([find_adb(), "devices"], check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
         raise ToolError(f"ADB device discovery failed (exit {exc.returncode}).") from exc
     lines = [line.split() for line in result.stdout.splitlines()[1:] if line.strip()]
-    ready = [line[0] for line in lines if len(line) >= 2 and line[1] == "device"]
+    return [{"serial": line[0], "state": line[1], "description": " ".join(line[2:])}
+            for line in lines if len(line) >= 2]
+
+
+def check_device(serial):
+    ready = [device["serial"] for device in list_devices() if device["state"] == "device"]
     if serial and serial not in ready:
         raise ToolError(f"ADB device {serial!r} is not ready. Run 'adb devices'.")
     if not serial and len(ready) != 1:
         raise ToolError(f"Expected one ready UNO Q; found {len(ready)}. Run 'adb devices' or pass --serial.")
+    return serial or ready[0]
+
+
+def read_hf_token(from_stdin=False):
+    if from_stdin:
+        token = sys.stdin.readline().strip()
+    else:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", getpass.GetPassWarning)
+                token = getpass.getpass("Hugging Face token (hidden): ").strip()
+        except (getpass.GetPassWarning, EOFError) as exc:
+            raise ToolError("A masked token prompt is unavailable. Use --hf-token-stdin for automation.") from exc
+    if not token.startswith("hf_"):
+        raise ToolError("Expected a Hugging Face token starting with hf_.")
+    return token
 
 
 def download_model_on_host(serial, token):
@@ -80,11 +104,20 @@ def download_model_on_host(serial, token):
             url = f"https://huggingface.co/convaiinnovations/laya/resolve/{MODEL_REVISION}/{filename}"
             headers = {"Authorization": f"Bearer {token}"} if token else {}
             print(f"Downloading {filename} on the computer...", flush=True)
-            try:
-                with urlopen(Request(url, headers=headers), timeout=120) as source, destination.open("wb") as target:
-                    shutil.copyfileobj(source, target, length=1024 * 1024)
-            except URLError as exc:
-                raise ToolError(f"Host download failed for {filename}: {exc.reason}") from exc
+            for attempt in range(2):
+                try:
+                    with urlopen(Request(url, headers=headers), timeout=120) as source, destination.open("wb") as target:
+                        shutil.copyfileobj(source, target, length=1024 * 1024)
+                    break
+                except HTTPError as exc:
+                    if exc.code in (401, 403, 429) and not token and attempt == 0 and sys.stdin.isatty():
+                        print("The Hub requested authentication or rate-limited this download.", flush=True)
+                        token = read_hf_token()
+                        headers = {"Authorization": f"Bearer {token}"}
+                        continue
+                    raise ToolError(f"Host download failed for {filename} (HTTP {exc.code}). Use --hf-token to enter a token privately.") from exc
+                except URLError as exc:
+                    raise ToolError(f"Host download failed for {filename}: {exc.reason}") from exc
             if filename == "model.safetensors":
                 with destination.open("rb") as model_file:
                     digest = hashlib.file_digest(model_file, "sha256").hexdigest()
@@ -93,18 +126,22 @@ def download_model_on_host(serial, token):
         for directory in (BOARD_MODEL, BOARD_MODEL + "/encoder", BOARD_MODEL + "/tokenizer"):
             adb_run(serial, "shell", "-T", f"mkdir -p {directory}")
         for filename in MODEL_FILES:
-            adb_run(serial, "push", str(Path(temporary) / filename), BOARD_MODEL + "/" + filename)
+            remote = BOARD_MODEL + "/" + filename
+            if filename == "model.safetensors":
+                remote += ".partial"
+            adb_run(serial, "push", str(Path(temporary) / filename), remote)
+        verification = subprocess.run(
+            adb_base(serial) + ["shell", "-T", f"sha256sum {BOARD_MODEL}/model.safetensors.partial"],
+            check=True, capture_output=True, text=True)
+        if not verification.stdout.split() or verification.stdout.split()[0] != MODEL_SHA256:
+            raise ToolError("The board's model checksum did not match after USB transfer.")
+        adb_run(serial, "shell", "-T", f"mv {BOARD_MODEL}/model.safetensors.partial {BOARD_MODEL}/model.safetensors")
+        print("Checkpoint verified on the computer and board after USB transfer.", flush=True)
 
 
-def setup(serial, skip_warmup, token_stdin=False, download_on_host=False):
-    if skip_warmup and download_on_host:
-        raise ToolError("Choose --skip-warmup or --download-on-host, not both.")
-    token = None
-    if token_stdin:
-        token = sys.stdin.readline().strip()
-        if not token.startswith("hf_"):
-            raise ToolError("Expected a Hugging Face token on stdin.")
-    check_device(serial)
+def setup(serial, skip_warmup, token_stdin=False, download_on_host=True, token_prompt=False):
+    token = read_hf_token(from_stdin=token_stdin) if token_stdin or token_prompt else None
+    serial = check_device(serial)
     adb_run(serial, "shell", "-T", f"mkdir -p {BOARD_DIR}")
     adb_run(serial, "push", str(ROOT / "board_worker.py"), BOARD_WORKER)
     adb_run(serial, "push", str(ROOT / "status_bridge.py"), BOARD_DIR + "/status_bridge.py")
@@ -119,8 +156,8 @@ def setup(serial, skip_warmup, token_stdin=False, download_on_host=False):
     if download_on_host:
         download_model_on_host(serial, token)
     if not skip_warmup:
-        print("Downloading and loading the English checkpoint on the board; this can take a while.", flush=True)
-        if token_stdin:
+        print("Loading the English checkpoint on the board; this can take a while.", flush=True)
+        if token and not download_on_host:
             command = adb_base(serial) + ["shell", "-T", f"{BOARD_PYTHON} -u {BOARD_WORKER} --warmup --token-stdin"]
             result = subprocess.run(command, input=token + "\n", text=True)
             if result.returncode:
@@ -133,6 +170,10 @@ def setup(serial, skip_warmup, token_stdin=False, download_on_host=False):
 def validate_request(value):
     if not isinstance(value, dict) or "state" not in value or "questions" not in value:
         raise ToolError("Each request needs 'state' and 'questions' fields.")
+    if not isinstance(value["state"], (str, dict, list)):
+        raise ToolError("state must be a string, object, or list.")
+    if not isinstance(value["questions"], dict) or not value["questions"]:
+        raise ToolError("questions must be a nonempty object.")
     return value
 
 
@@ -175,27 +216,54 @@ def predict(serial, path, lines):
         raise ToolError("ADB is missing. Install Android platform-tools and add adb to PATH.") from exc
 
 
-def predict_app(serial, path, lines):
-    """Connect to a running imported App Lab app using a temporary USB forward."""
-    check_device(serial)
-    result = subprocess.run(adb_base(serial) + ["forward", "tcp:0", "tcp:8765"],
-                            check=True, capture_output=True, text=True)
-    port = int(result.stdout.strip())
+class AppLabConnection:
+    """A reusable USB forward to the persistent App Lab inference service."""
+
+    def __init__(self, serial=None):
+        self.serial = check_device(serial)
+        self.adb = adb_base(self.serial)
+        try:
+            result = subprocess.run(self.adb + ["forward", "tcp:0", "tcp:8765"],
+                                    check=True, capture_output=True, text=True)
+            self.port = int(result.stdout.strip())
+        except (subprocess.CalledProcessError, ValueError) as exc:
+            raise ToolError("Unable to open the USB connection to App Lab.") from exc
+
+    def request(self, endpoint, value=None, timeout=600):
+        if self.port is None:
+            raise ToolError("USB connection is closed.")
+        request = Request(f"http://127.0.0.1:{self.port}/{endpoint}",
+                          data=json.dumps(value).encode("utf-8") if value is not None else None,
+                          headers={"Content-Type": "application/json"})
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                return json.load(response)
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise ToolError(f"App Lab request failed (HTTP {exc.code}): {detail}") from exc
+        except (URLError, TimeoutError) as exc:
+            raise ToolError("App Lab is unavailable or timed out. Run Laya Q in App Lab and wait for it to load.") from exc
+
+    def close(self):
+        if self.port is not None:
+            subprocess.run(self.adb + ["forward", "--remove", f"tcp:{self.port}"],
+                           check=False, capture_output=True)
+            self.port = None
+
+
+@contextmanager
+def app_connection(serial=None):
+    connection = AppLabConnection(serial)
     try:
-        for value in requests_from_file(path, lines):
-            request = Request(f"http://127.0.0.1:{port}/predict",
-                              data=json.dumps(value).encode("utf-8"),
-                              headers={"Content-Type": "application/json"})
-            try:
-                with urlopen(request, timeout=600) as response:
-                    print(json.dumps(json.load(response), ensure_ascii=False), flush=True)
-            except HTTPError as exc:
-                raise ToolError(f"App Lab prediction failed: {exc.read().decode('utf-8')}") from exc
-            except URLError as exc:
-                raise ToolError("App Lab endpoint is unavailable. Import the release ZIP and run Laya Q first.") from exc
+        yield connection
     finally:
-        subprocess.run(adb_base(serial) + ["forward", "--remove", f"tcp:{port}"],
-                       check=False, capture_output=True)
+        connection.close()
+
+
+def predict_app(serial, path, lines):
+    with app_connection(serial) as connection:
+        for value in requests_from_file(path, lines):
+            print(json.dumps(connection.request("predict", value), ensure_ascii=False), flush=True)
 
 
 def main():
@@ -203,24 +271,35 @@ def main():
     parser.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL"), help="ADB serial if several devices are attached")
     subparsers = parser.add_subparsers(dest="command", required=True)
     install = subparsers.add_parser("setup", help="install the worker and Laya on the board")
-    install.add_argument("--skip-warmup", action="store_true", help="download checkpoint on first prediction instead")
-    install.add_argument("--hf-token-stdin", action="store_true", help="read a Hub token from stdin for this setup only")
-    install.add_argument("--download-on-host", action="store_true", help="download checkpoint on this computer and transfer it over USB")
+    install.add_argument("--skip-warmup", action="store_true", help="skip loading the checkpoint after setup")
+    authentication = install.add_mutually_exclusive_group()
+    authentication.add_argument("--hf-token", action="store_true", help="prompt privately for a temporary Hugging Face token")
+    authentication.add_argument("--hf-token-stdin", action="store_true", help="read a temporary Hub token from stdin for automation")
+    location = install.add_mutually_exclusive_group()
+    location.add_argument("--download-on-host", dest="download_on_host", action="store_true", help="download on this computer and transfer over USB (default)")
+    location.add_argument("--download-on-board", dest="download_on_host", action="store_false", help="download the checkpoint from the board instead")
+    install.set_defaults(download_on_host=True)
     ask = subparsers.add_parser("predict", help="send JSON requests to the board")
     ask.add_argument("input", help="JSON file, or '-' for stdin")
     ask.add_argument("--jsonl", action="store_true", help="read multiple newline-delimited JSON requests")
     ask.add_argument("--app-lab", action="store_true", help="use the running imported App Lab app over USB")
+    portal = subparsers.add_parser("portal", help="open a local browser testing portal for the App Lab app")
+    portal.add_argument("--port", type=int, default=8080, help="local web portal port (default: 8080)")
+    portal.add_argument("--no-browser", action="store_true", help="print the URL without opening a browser")
     args = parser.parse_args()
     try:
         if args.command == "setup":
-            setup(args.serial, args.skip_warmup, args.hf_token_stdin, args.download_on_host)
+            setup(args.serial, args.skip_warmup, args.hf_token_stdin, args.download_on_host, args.hf_token)
+        elif args.command == "portal":
+            from web_portal import serve
+            serve(port=args.port, serial=args.serial, open_browser=not args.no_browser)
         else:
             if args.app_lab:
                 predict_app(args.serial, args.input, args.jsonl)
             else:
                 predict(args.serial, args.input, args.jsonl)
         return 0
-    except (ToolError, OSError, json.JSONDecodeError) as exc:
+    except (ToolError, OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

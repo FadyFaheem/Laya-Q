@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Laya Q · Test bench</title>
+  <link rel="stylesheet" href="/portal.css">
+  <script src="/portal.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand"><span class="brand-icon">♥</span><span>Laya<span class="q"> Q</span></span></div>
+      <p class="tagline">A little board.<br>A local decision engine.</p>
+      <div class="side-label">YOUR TEST BENCH</div>
+      <div class="nav-active">◈ &nbsp; Model playground</div>
+      <div class="board-card"><span class="eyebrow">ARDUINO UNO Q</span><h3>Two brains, one cable.</h3><p>Linux runs Laya. The STM32 brings each request to life on the LED matrix.</p><span class="usb-tag">USB connection</span></div>
+      <ol class="steps"><li>Plug in your UNO Q.</li><li>Run <strong>Laya Q</strong> in App Lab.</li><li>Connect and send a request.</li></ol>
+      <div class="side-footer">Your model runs on your board.</div>
+    </aside>
+    <main>
+      <header><div><div class="eyebrow">LOCAL AI / PLAYGROUND</div><h1>Try a decision.</h1><p>Give Laya a state and a question. See what your UNO Q thinks.</p></div><div id="connectionBadge" class="badge"><span class="dot"></span><span id="connectionLabel">Disconnected</span></div></header>
+      <section class="connection panel" aria-label="Board connection">
+        <div><label for="device">USB board</label><select id="device"><option value="">Finding devices…</option></select></div>
+        <button id="refresh" class="secondary">Refresh</button><button id="connect">Connect over USB</button><button id="disconnect" class="secondary" hidden>Disconnect</button>
+      </section>
+      <div id="notice" class="notice" role="status" aria-live="polite">Looking for your board…</div>
+      <div class="workspace">
+        <section class="panel request-panel">
+          <div class="panel-title"><h2>01 <span>Your request</span></h2><button id="example" class="text-button">Load example ↗</button></div>
+          <label for="state">State <span>Text or JSON describing the situation</span></label>
+          <textarea id="state" rows="6" placeholder="Describe a ticket, message, or situation…"></textarea>
+          <label for="questions">Questions <span>Typed decisions in JSON</span></label>
+          <textarea id="questions" class="code" rows="15" spellcheck="false" placeholder='{"department": {"type": "choice", "criteria": {…}}}'></textarea>
+          <div class="run-row"><span>Ctrl / ⌘ + Enter to run</span><button id="run" disabled>Send to UNO Q <span aria-hidden="true">→</span></button></div>
+        </section>
+        <section class="panel result-panel">
+          <div class="panel-title"><h2>02 <span>Board response</span></h2><button id="copy" class="text-button" disabled>Copy JSON</button></div>
+          <div id="emptyResult" class="empty-result"><div class="empty-heart">♥</div><h3>Ready when you are.</h3><p>Connect your board and send a request.<br>The result will appear here.</p></div>
+          <div id="resultArea" hidden><div class="result-meta"><span id="resultStatus">Completed</span><span id="elapsed"></span></div><div id="answers" class="answers"></div><pre id="output" tabindex="0"></pre><p class="confidence-note">The bundled checkpoint reports a calibration warning. Treat confidence values as uncalibrated.</p></div>
+        </section>
+      </div>
+      <footer>English checkpoint · CPU inference on UNO Q · Requests and results travel over USB</footer>
+    </main>
+  </div>
+</body>
+</html>

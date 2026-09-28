@@ -9,7 +9,7 @@ Laya answers typed `choice`, `score`, and yes/no questions about a supplied stat
 - Arduino UNO Q connected to the computer with a USB **data** cable and configured through Arduino App Lab.
 - Python 3.11+ on the computer. The host script uses only Python's standard library.
 - ADB on `PATH`, or Arduino App Lab's bundled ADB on Windows. The host script finds the latter automatically.
-- Internet access from the **board** during setup to install Python packages and download the checkpoint. Later requests use the cached model.
+- Internet access from the **board** to install Python packages and from the **computer** to download the checkpoint during setup. Later requests use the installed model.
 - Several GB free in `/home/arduino`. The virtual environment, package cache, and checkpoint are stored there, not in the smaller root partition.
 
 App Lab itself opens a USB board shell with its bundled `adb -s <serial> shell`. This tool uses the same connection. `adb devices` must show the board with status `device`.
@@ -22,7 +22,7 @@ From this repository on the computer:
 python laya_q.py setup
 ```
 
-For a faster checkpoint download, use the computer's connection and transfer it over USB:
+Setup downloads the checkpoint on your computer by default, verifies its SHA256, transfers it over USB, and verifies the board's copy before installing it. `--download-on-host` remains available as an explicit option:
 
 ```powershell
 python laya_q.py setup --download-on-host
@@ -34,15 +34,17 @@ If more than one ADB device is attached, supply `--serial` before the subcommand
 python laya_q.py --serial 116087906 setup
 ```
 
-Setup copies `board_worker.py` to `/home/arduino/laya-q`, creates a private virtual environment, installs CPU-only PyTorch 2.9.1 and `laya==0.3.20`, and loads the checkpoint once to populate the Hugging Face cache. The first setup may take a while. The script downloads the official `get-pip.py` bootstrap into that virtual environment because the stock UNO Q Python image may lack Debian's `python3.13-venv` package. PyTorch 2.10 crashed with an illegal instruction on the tested UNO Q, so the installer pins 2.9.1. The worker disables the Hugging Face Xet downloader because it stalled on this board connection.
+Setup copies the worker to `/home/arduino/laya-q`, creates a private virtual environment, installs CPU-only PyTorch 2.9.1 and `laya==0.3.20`, and loads the transferred checkpoint from `/home/arduino/laya-q/model`. Python dependencies are installed on the board; checkpoint downloads use your computer's connection. The first setup may take a while. The script downloads the official `get-pip.py` bootstrap into that virtual environment because the stock UNO Q Python image may lack Debian's `python3.13-venv` package. PyTorch 2.10 crashed with an illegal instruction on the tested UNO Q, so the installer pins 2.9.1. The worker disables the Hugging Face Xet downloader because it stalled on this board connection.
 
-To install packages first and defer the checkpoint download until the first prediction, run `python laya_q.py setup --skip-warmup`.
+To transfer the checkpoint without loading it immediately, run `python laya_q.py setup --skip-warmup`. To download from the board instead, use `--download-on-board`; adding `--skip-warmup` in that mode defers the board download until the first prediction.
 
-If the Hub asks for authentication or applies a download limit, pass a token through standard input. It is held only for that setup process and is not written to this repository or a board credential file:
+For authentication, ask Python to prompt for your token with hidden input. The token stays in memory for this setup and is not saved to Git, the project, or a board credential file:
 
 ```powershell
-Read-Host "Hugging Face token" | python laya_q.py setup --hf-token-stdin
+python laya_q.py setup --hf-token
 ```
+
+During an interactive host download, the script also prompts privately if the Hub returns an authentication or rate-limit response. `--hf-token-stdin` remains supported for automation. The public checkpoint normally needs no token; entering a token does not guarantee that every rate limit will be lifted.
 
 ## Predict
 
@@ -99,6 +101,20 @@ python laya_q.py predict examples/triage.json --app-lab
 This creates and removes an ADB port forward automatically. The app also exposes `POST /predict` and `GET /health` on port 8765. The API is intended for your local board connection and has no authentication; the port is also exposed on the board's network interface.
 
 Use `--app-lab` while the App Lab app is running. Stop that app before using the direct worker mode so the board only holds one model in memory.
+
+## Local web testing portal
+
+Run **Laya Q** in App Lab, then start the portal on your computer:
+
+```powershell
+python laya_q.py portal
+```
+
+The script opens `http://127.0.0.1:8080` in your browser. Select your USB board, click **Connect over USB**, load the example or edit the state and questions, then send the request. The portal displays typed answers, full JSON results, and elapsed time. The model remains on the UNO Q, and its matrix shows request activity.
+
+Use `--port 8081` if port 8080 is occupied, or `--no-browser` to open the printed URL yourself. The portal binds only to your computer's loopback interface and needs no additional Python packages. Release bundles include it under `tools/`; use `python tools/laya_q.py portal` there.
+
+Chrome works with this portal through the Python ADB connection. Direct browser WebUSB is not implemented: it would need a browser-side ADB client, compatible USB drivers, and exclusive access to the interface. The current portal can use the existing App Lab USB connection without taking over that interface. See [Chrome's WebUSB documentation](https://developer.chrome.com/docs/capabilities/usb) for browser interface requirements.
 
 ## Build and automatic releases
 

@@ -24,6 +24,7 @@ MODEL_FILES = (
 APP_FILES = ("app.yaml", "README.md", "python/main.py", "python/requirements.txt",
              "sketch/sketch.ino", "sketch/sketch.yaml")
 PROJECT_FILES = ("laya_q.py", "board_worker.py", "status_bridge.py",
+                 "web_portal.py", "portal/index.html", "portal/portal.css", "portal/portal.js",
                  "examples/triage.json", "README.md")
 
 
