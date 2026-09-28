@@ -1,7 +1,10 @@
 import io
 import json
+import os
+from pathlib import Path
+import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import board_worker
 import laya_q
@@ -18,6 +21,21 @@ class FakeStatus:
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_worker_requires_local_weights_and_loads_offline(self):
+        laya = Mock()
+        with tempfile.TemporaryDirectory() as folder, \
+             patch.object(board_worker, "LOCAL_MODEL", folder), \
+             patch.dict(board_worker.sys.modules, {"laya": laya}), \
+             patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(FileNotFoundError, "on your computer"):
+                board_worker.load_agent()
+            laya.load.assert_not_called()
+            (Path(folder) / "model.safetensors").write_bytes(b"test")
+            board_worker.load_agent()
+            laya.load.assert_called_once_with(folder, device="cpu")
+            self.assertEqual(os.environ["HF_HUB_OFFLINE"], "1")
+            self.assertEqual(os.environ["TRANSFORMERS_OFFLINE"], "1")
+
     def test_board_returns_one_response_per_request(self):
         input_lines = io.StringIO(
             '{"state":"hello","questions":{"q":{"type":"choice"}}}\n'

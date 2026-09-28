@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from model_download import MANIFEST
+
 
 def load_app():
     spec = importlib.util.spec_from_file_location("laya_app", "app_lab/laya_status/python/main.py")
@@ -29,12 +31,17 @@ class AppLabTests(unittest.TestCase):
             parts.mkdir(parents=True)
             (parts / "0000.bin").write_bytes(b"first")
             (parts / "0001.bin").write_bytes(b"second")
-            app.WEIGHTS_SHA256 = hashlib.sha256(b"firstsecond").hexdigest()
             for filename in ("rl_agent_config.json", "encoder/config.json",
                              "tokenizer/tokenizer_config.json", "tokenizer/tokenizer.json"):
                 path = app.SOURCE_MODEL / filename
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("{}")
+            manifest = {"revision": "test", "files": [
+                {"path": "model.safetensors", "size": 11, "sha256": hashlib.sha256(b"firstsecond").hexdigest()}]}
+            for path in app.SOURCE_MODEL.rglob("*.json"):
+                manifest["files"].append({"path": path.relative_to(app.SOURCE_MODEL).as_posix(),
+                                          "size": path.stat().st_size, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+            (app.SOURCE_MODEL / MANIFEST).write_text(json.dumps(manifest))
             app.prepare_model()
             self.assertEqual((app.MODEL / "model.safetensors").read_bytes(), b"firstsecond")
             (app.MODEL / "model.safetensors").unlink()
@@ -42,6 +49,19 @@ class AppLabTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "checksum"):
                 app.prepare_model()
             self.assertFalse((app.MODEL / "model.safetensors").exists())
+
+    def test_missing_cache_requires_host_installation_without_network(self):
+        app = load_app()
+        with tempfile.TemporaryDirectory() as folder:
+            app.SOURCE_MODEL = Path(folder) / "no-bundled-model"
+            app.MODEL = Path(folder) / "cache"
+            with patch("model_download.urlopen") as network:
+                with self.assertRaisesRegex(FileNotFoundError, "On your computer"):
+                    app.prepare_model()
+                network.assert_not_called()
+            with patch.object(app, "cache_complete", return_value=True), patch("model_download.urlopen") as network:
+                app.prepare_model()
+                network.assert_not_called()
 
     def test_http_prediction_and_bad_request(self):
         app = load_app()

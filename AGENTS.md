@@ -14,6 +14,7 @@ These instructions apply throughout this repository. Read `README.md` and the re
 | Path | Responsibility |
 | --- | --- |
 | `laya_q.py` | Standard-library host CLI, ADB discovery, setup, host downloads, and both prediction transports |
+| `model_download.py` | Current Hub revision resolution, snapshot downloads, dynamic verification, and cache completion checks |
 | `web_portal.py`, `portal/` | Loopback web testing portal, device selection, and browser assets |
 | `board_worker.py` | Direct Linux worker: loads Laya and handles JSON-lines requests |
 | `status_bridge.py` | Direct worker's MessagePack RPC client for STM32 status |
@@ -38,11 +39,13 @@ python laya_q.py predict examples/triage.json
 python laya_q.py predict requests.jsonl --jsonl
 ```
 
-Host checkpoint downloads are the default. Verify SHA256 on both computer and board, then publish the transferred weight file atomically. `--download-on-board` opts into board downloads; `--skip-warmup` skips loading after setup and still transfers weights in host mode.
+Host checkpoint downloads are mandatory. Verify downloads against current Hub metadata and compare transferred files with the computer's freshly computed digests. Publish a completion manifest after all files are installed. `--skip-warmup` skips loading after setup and still transfers weights.
 
 The worker emits exactly one `LAYA_Q_RESPONSE `-prefixed JSON response per request. Preserve this framing and the `ok`, `result`, and `error` fields. Keep diagnostic output separate from protocol responses.
 
 **App Lab:** import the release ZIP and run **Laya Q**. Its Python process keeps the model loaded and exposes `POST /predict` and `GET /health` on port 8765. The host CLI creates a temporary ADB forward and removes it after use.
+
+The default ZIP contains code only. `python laya_q.py setup --app-lab <APP_ID>` downloads the latest model on the computer and transfers its original safetensors file and support files into the imported app's `.cache/model`. Missing models must produce setup instructions, never a board download. Stop the app before updating its cache, then restart it. Cached models do not update automatically on every boot.
 
 ```powershell
 python laya_q.py predict examples/triage.json --app-lab
@@ -70,19 +73,20 @@ Both transports accept a JSON object containing `state` (string, object, or list
 - Host scripts and CI require Python 3.11+ and use the standard library. Local tests do not require Laya, PyTorch, or an attached board.
 - Keep CPU PyTorch pinned to `2.9.1+cpu` and Laya to `0.3.20` unless a deliberate upgrade is verified on hardware. PyTorch 2.10 produced an illegal-instruction crash on the tested UNO Q.
 - The direct installer uses `venv --without-pip` and official `get-pip.py` because the board image may lack Debian's venv package.
-- Hugging Face Xet downloads stalled on the tested board. Preserve `HF_HUB_DISABLE_XET=1` and the host-download option unless a replacement is verified.
-- Keep checkpoint revision and weight SHA256 consistent in `laya_q.py`, `scripts/build_app_lab.py`, App Lab `main.py`, and documentation. Verify downloaded or assembled weights before loading them.
-- App Lab rejected the full weight file during ZIP import. The builder stores it as **8 MiB parts**; App Lab assembles and verifies them in `.cache/model` on first run. Preserve ordered streaming assembly and atomic publication of the verified file.
+- Model downloads on the board are slow. Keep them on the computer, with offline Hugging Face/Transformers loading enforced in both board runtimes. Do not reintroduce a network fallback for missing model files.
+- Do not hardcode model revisions or checkpoint hashes. `model_download.py` resolves the current upstream commit once per download and retrieves matching files. Digests in generated manifests are per-download verification data, not permanent source constants. Future weights should not require source edits merely because their hashes changed.
+- The original `.safetensors` contains weights only; Laya requires tokenizer/configuration support files. Keep these in the hidden app cache. The default bundle contains no model directory or parts. The builder copies the shared download helper into both `python/` and `tools/`; do not maintain divergent copies.
+- App Lab limits individual imported files to 100 MiB. Only the optional `--include-model` offline bundle uses 8 MiB pieces, with dynamically generated verification metadata. Preserve its ordered assembly and completion marker checks.
 - The tested checkpoint warns about invalid calibration temperatures. Treat affected confidence values as uncalibrated; do not describe them as guaranteed calibrated probabilities.
 
 ## Secrets, packaging, and releases
 
 - Never put Hugging Face tokens, passwords, or personal credentials in source, Git, logs, examples, ZIPs, or board credential files. Do not repeat a supplied token in messages or command arguments.
-- The pinned model is public; ordinary downloads and release builds need no Hugging Face token. `setup --hf-token` uses a masked Python prompt; interactive host downloads can prompt after authentication or rate-limit responses. Preserve `--hf-token-stdin` for automation. Never fall back to echoing a secret when masked input is unavailable.
+- The model is public; ordinary downloads and release builds need no Hugging Face token. `setup --hf-token` uses a masked Python prompt; interactive host downloads can prompt after authentication or rate-limit responses. Preserve `--hf-token-stdin` for automation. Never fall back to echoing a secret when masked input is unavailable.
 - Keep weights, generated ZIPs, `.build`, environments, and caches out of Git. Do not add personal request data to bundles.
 - The builder includes explicit file allowlists, not the entire working directory. Update those lists intentionally when release contents change.
-- The bundle includes the upstream model's Apache 2.0 license. Keep its attribution and license when changing packaging.
-- Build with `python scripts/build_app_lab.py Laya-Q-App-Lab.zip`. To reuse verified local weights, add `--weights-file <path>`; metadata and license downloads still require network access.
+- Bundles containing weights include the upstream model's Apache 2.0 license. Keep its attribution and license when changing packaging.
+- Build the small default ZIP with `python scripts/build_app_lab.py Laya-Q-App-Lab.zip`. Use `--include-model` for an offline model bundle. `--weights-file <path>` also selects an offline bundle and checks those weights against current Hub metadata; metadata and license downloads still require network access.
 - The release workflow publishes the ZIP when a `v*` tag is pushed, using GitHub's built-in token. Make commits, pushes, tags, and releases only as requested by the user; preserve unrelated working changes.
 
 ## Verification and reporting
@@ -91,7 +95,7 @@ Run from the repository root for relevant Python changes:
 
 ```powershell
 python -m unittest discover -s tests -v
-python -m compileall -q laya_q.py web_portal.py board_worker.py status_bridge.py app_lab/laya_status/python/main.py scripts/build_app_lab.py
+python -m compileall -q laya_q.py model_download.py web_portal.py board_worker.py status_bridge.py app_lab/laya_status/python/main.py scripts/build_app_lab.py
 ```
 
 Use tests that check observable protocol behavior, error handling, or integrity checks. Documentation-only edits need a review for accuracy, not model downloads or board tests.

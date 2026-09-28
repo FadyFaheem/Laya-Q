@@ -21,13 +21,14 @@ def write_response(value):
 def load_agent():
     # Avoid importing optional TensorFlow while transformers initializes.
     os.environ.setdefault("USE_TF", "0")
-    # The UNO Q's connection can stall with the chunked Xet client.
-    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
-    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "120")
+    # Model downloads belong on the computer; fail locally if support files are missing.
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    if not os.path.isfile(os.path.join(LOCAL_MODEL, "model.safetensors")):
+        raise FileNotFoundError("Model not installed. Run python laya_q.py setup on your computer first.")
     import laya
 
-    model = LOCAL_MODEL if os.path.isfile(os.path.join(LOCAL_MODEL, "model.safetensors")) else "convaiinnovations/laya"
-    return laya.load(model, device="cpu")
+    return laya.load(LOCAL_MODEL, device="cpu")
 
 
 def run(agent, input_stream, status=None):
@@ -56,7 +57,7 @@ def run(agent, input_stream, status=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--warmup", action="store_true", help="download and load the checkpoint")
+    parser.add_argument("--warmup", action="store_true", help="load the installed checkpoint")
     parser.add_argument("--token-stdin", action="store_true", help="read a temporary Hub token from stdin")
     args = parser.parse_args()
     try:

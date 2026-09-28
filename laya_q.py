@@ -3,10 +3,10 @@
 import argparse
 from contextlib import contextmanager
 import getpass
-import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -15,6 +15,8 @@ import warnings
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from model_download import MANIFEST, download_snapshot
+
 
 ROOT = Path(__file__).resolve().parent
 BOARD_DIR = "/home/arduino/laya-q"
@@ -22,10 +24,6 @@ BOARD_PYTHON = BOARD_DIR + "/.venv/bin/python"
 BOARD_WORKER = BOARD_DIR + "/board_worker.py"
 BOARD_MODEL = BOARD_DIR + "/model"
 PREFIX = "LAYA_Q_RESPONSE "
-MODEL_REVISION = "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851"
-MODEL_SHA256 = "891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c"
-MODEL_FILES = ("rl_agent_config.json", "model.safetensors", "encoder/config.json",
-               "tokenizer/tokenizer_config.json", "tokenizer/tokenizer.json")
 
 
 class ToolError(Exception):
@@ -95,51 +93,64 @@ def read_hf_token(from_stdin=False):
     return token
 
 
-def download_model_on_host(serial, token):
-    """Fetch one fixed checkpoint on the computer and copy it over USB."""
-    with tempfile.TemporaryDirectory(prefix="laya-q-") as temporary:
-        for filename in MODEL_FILES:
-            destination = Path(temporary) / filename
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            url = f"https://huggingface.co/convaiinnovations/laya/resolve/{MODEL_REVISION}/{filename}"
+def download_model_on_host(serial, token, board_model=BOARD_MODEL):
+    """Fetch the current checkpoint on the computer and copy it over USB."""
+    def open_remote(url):
+        nonlocal token
+        for attempt in range(2):
             headers = {"Authorization": f"Bearer {token}"} if token else {}
-            print(f"Downloading {filename} on the computer...", flush=True)
-            for attempt in range(2):
-                try:
-                    with urlopen(Request(url, headers=headers), timeout=120) as source, destination.open("wb") as target:
-                        shutil.copyfileobj(source, target, length=1024 * 1024)
-                    break
-                except HTTPError as exc:
-                    if exc.code in (401, 403, 429) and not token and attempt == 0 and sys.stdin.isatty():
-                        print("The Hub requested authentication or rate-limited this download.", flush=True)
-                        token = read_hf_token()
-                        headers = {"Authorization": f"Bearer {token}"}
-                        continue
-                    raise ToolError(f"Host download failed for {filename} (HTTP {exc.code}). Use --hf-token to enter a token privately.") from exc
-                except URLError as exc:
-                    raise ToolError(f"Host download failed for {filename}: {exc.reason}") from exc
-            if filename == "model.safetensors":
-                with destination.open("rb") as model_file:
-                    digest = hashlib.file_digest(model_file, "sha256").hexdigest()
-                if digest != MODEL_SHA256:
-                    raise ToolError("Downloaded model checksum did not match the pinned checkpoint.")
-        for directory in (BOARD_MODEL, BOARD_MODEL + "/encoder", BOARD_MODEL + "/tokenizer"):
+            try:
+                return urlopen(Request(url, headers=headers), timeout=120)
+            except HTTPError as exc:
+                exc.close()
+                if exc.code in (401, 403, 429) and not token and attempt == 0 and sys.stdin.isatty():
+                    print("The Hub requested authentication or rate-limited this download.", flush=True)
+                    token = read_hf_token()
+                    continue
+                raise ToolError(f"Host download failed (HTTP {exc.code}). Use --hf-token to enter a token privately.") from exc
+            except URLError as exc:
+                raise ToolError(f"Host download failed: {exc.reason}") from exc
+
+    with tempfile.TemporaryDirectory(prefix="laya-q-") as temporary:
+        try:
+            manifest = download_snapshot(temporary, open_remote=open_remote)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        for entry in manifest["files"]:
+            filename = entry["path"]
+            remote = board_model + "/" + filename + ".partial"
+            directory = remote.rsplit("/", 1)[0]
             adb_run(serial, "shell", "-T", f"mkdir -p {directory}")
-        for filename in MODEL_FILES:
-            remote = BOARD_MODEL + "/" + filename
-            if filename == "model.safetensors":
-                remote += ".partial"
             adb_run(serial, "push", str(Path(temporary) / filename), remote)
-        verification = subprocess.run(
-            adb_base(serial) + ["shell", "-T", f"sha256sum {BOARD_MODEL}/model.safetensors.partial"],
-            check=True, capture_output=True, text=True)
-        if not verification.stdout.split() or verification.stdout.split()[0] != MODEL_SHA256:
-            raise ToolError("The board's model checksum did not match after USB transfer.")
-        adb_run(serial, "shell", "-T", f"mv {BOARD_MODEL}/model.safetensors.partial {BOARD_MODEL}/model.safetensors")
-        print("Checkpoint verified on the computer and board after USB transfer.", flush=True)
+            verification = subprocess.run(adb_base(serial) + ["shell", "-T", f"sha256sum {remote}"],
+                                          check=True, capture_output=True, text=True)
+            if not verification.stdout.split() or verification.stdout.split()[0] != entry["sha256"]:
+                raise ToolError(f"Board checksum mismatch after USB transfer: {filename}")
+        # Invalidate the completion marker before publishing a different snapshot.
+        adb_run(serial, "shell", "-T", f"rm -f {board_model}/{MANIFEST}")
+        for entry in manifest["files"]:
+            remote = board_model + "/" + entry["path"]
+            adb_run(serial, "shell", "-T", f"mv {remote}.partial {remote}")
+        adb_run(serial, "push", str(Path(temporary) / MANIFEST), board_model + "/" + MANIFEST + ".partial")
+        adb_run(serial, "shell", "-T", f"mv {board_model}/{MANIFEST}.partial {board_model}/{MANIFEST}")
+        print(f"Laya {manifest['revision'][:12]} verified on the computer and board after USB transfer.", flush=True)
+
+
+def setup_app_model(serial, app_id, token_stdin=False, token_prompt=False):
+    name = app_id.removeprefix("user:")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+        raise ToolError("Use the imported App Lab app ID, for example user:laya-q-app-lab.")
+    serial = check_device(serial)
+    app_path = f"/home/arduino/ArduinoApps/{name}"
+    adb_run(serial, "shell", "-T", f"test -f {app_path}/app.yaml")
+    token = read_hf_token(from_stdin=token_stdin) if token_stdin or token_prompt else None
+    download_model_on_host(serial, token, app_path + "/.cache/model")
+    print(f"Model installed. Run or restart user:{name} in App Lab.")
 
 
 def setup(serial, skip_warmup, token_stdin=False, download_on_host=True, token_prompt=False):
+    if not download_on_host:
+        raise ToolError("Model downloads must run on the computer.")
     token = read_hf_token(from_stdin=token_stdin) if token_stdin or token_prompt else None
     serial = check_device(serial)
     adb_run(serial, "shell", "-T", f"mkdir -p {BOARD_DIR}")
@@ -153,17 +164,10 @@ def setup(serial, skip_warmup, token_stdin=False, download_on_host=True, token_p
     adb_run(serial, "shell", "-T", f"{pip_env} {BOARD_PYTHON} -m pip install torch==2.9.1+cpu --index-url https://download.pytorch.org/whl/cpu")
     adb_run(serial, "shell", "-T", f"{pip_env} {BOARD_PYTHON} -m pip install laya==0.3.20")
     adb_run(serial, "shell", "-T", f"{pip_env} {BOARD_PYTHON} -m pip install msgpack==1.1.1")
-    if download_on_host:
-        download_model_on_host(serial, token)
+    download_model_on_host(serial, token)
     if not skip_warmup:
         print("Loading the English checkpoint on the board; this can take a while.", flush=True)
-        if token and not download_on_host:
-            command = adb_base(serial) + ["shell", "-T", f"{BOARD_PYTHON} -u {BOARD_WORKER} --warmup --token-stdin"]
-            result = subprocess.run(command, input=token + "\n", text=True)
-            if result.returncode:
-                raise ToolError(f"Board warmup failed (exit {result.returncode}).")
-        else:
-            adb_run(serial, "shell", "-T", f"{BOARD_PYTHON} -u {BOARD_WORKER} --warmup")
+        adb_run(serial, "shell", "-T", f"{BOARD_PYTHON} -u {BOARD_WORKER} --warmup")
     print("UNO Q setup complete.")
 
 
@@ -272,12 +276,11 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True)
     install = subparsers.add_parser("setup", help="install the worker and Laya on the board")
     install.add_argument("--skip-warmup", action="store_true", help="skip loading the checkpoint after setup")
+    install.add_argument("--app-lab", metavar="APP_ID", help="install the current model into an imported App Lab app's cache")
     authentication = install.add_mutually_exclusive_group()
     authentication.add_argument("--hf-token", action="store_true", help="prompt privately for a temporary Hugging Face token")
     authentication.add_argument("--hf-token-stdin", action="store_true", help="read a temporary Hub token from stdin for automation")
-    location = install.add_mutually_exclusive_group()
-    location.add_argument("--download-on-host", dest="download_on_host", action="store_true", help="download on this computer and transfer over USB (default)")
-    location.add_argument("--download-on-board", dest="download_on_host", action="store_false", help="download the checkpoint from the board instead")
+    install.add_argument("--download-on-host", action="store_true", help="download on this computer and transfer over USB (always enabled)")
     install.set_defaults(download_on_host=True)
     ask = subparsers.add_parser("predict", help="send JSON requests to the board")
     ask.add_argument("input", help="JSON file, or '-' for stdin")
@@ -289,7 +292,10 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "setup":
-            setup(args.serial, args.skip_warmup, args.hf_token_stdin, args.download_on_host, args.hf_token)
+            if args.app_lab:
+                setup_app_model(args.serial, args.app_lab, args.hf_token_stdin, args.hf_token)
+            else:
+                setup(args.serial, args.skip_warmup, args.hf_token_stdin, args.download_on_host, args.hf_token)
         elif args.command == "portal":
             from web_portal import serve
             serve(port=args.port, serial=args.serial, open_browser=not args.no_browser)

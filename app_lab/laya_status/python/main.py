@@ -10,21 +10,30 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from arduino.app_utils import App, Bridge
+from model_download import MANIFEST, cache_complete, file_digest, safe_path
 
 
 PORT = 8765
 APP_ROOT = Path(__file__).resolve().parent.parent
 SOURCE_MODEL = APP_ROOT / "model"
 MODEL = APP_ROOT / ".cache" / "model"
-WEIGHTS_SHA256 = "891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c"
 PREDICT_LOCK = threading.Lock()
 AGENT = None
 
 
 def prepare_model():
     MODEL.mkdir(parents=True, exist_ok=True)
+    if cache_complete(MODEL):
+        return
+    bundled = SOURCE_MODEL / MANIFEST
+    if not bundled.is_file():
+        raise FileNotFoundError("Model not installed. On your computer run: python laya_q.py setup --app-lab <APP_ID>. Then run this app again.")
+    manifest = json.loads(bundled.read_text(encoding="utf-8"))
+    for entry in manifest["files"]:
+        safe_path(entry["path"])
+    weights_entry = next(entry for entry in manifest["files"] if entry["path"] == "model.safetensors")
     weights = MODEL / "model.safetensors"
-    if not weights.is_file():
+    if not weights.is_file() or file_digest(weights) != weights_entry["sha256"]:
         parts = sorted((SOURCE_MODEL / "parts").glob("*.bin"))
         if not parts:
             raise FileNotFoundError("Bundled checkpoint parts are missing; import the release ZIP")
@@ -36,15 +45,20 @@ def prepare_model():
                     while chunk := source.read(1024 * 1024):
                         digest.update(chunk)
                         output.write(chunk)
-        if digest.hexdigest() != WEIGHTS_SHA256:
+        if digest.hexdigest() != weights_entry["sha256"]:
             temporary.unlink(missing_ok=True)
             raise ValueError("Bundled checkpoint checksum mismatch")
         temporary.replace(weights)
-    for filename in ("rl_agent_config.json", "encoder/config.json",
-                     "tokenizer/tokenizer_config.json", "tokenizer/tokenizer.json"):
+    for entry in manifest["files"]:
+        filename = entry["path"]
+        if filename == "model.safetensors":
+            continue
+        if file_digest(SOURCE_MODEL / filename) != entry["sha256"]:
+            raise ValueError(f"Bundled support file checksum mismatch: {filename}")
         target = MODEL / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(SOURCE_MODEL / filename, target)
+    shutil.copyfile(bundled, MODEL / MANIFEST)
 
 
 def status(code):
@@ -100,11 +114,16 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     global AGENT
     os.environ.setdefault("USE_TF", "0")
-    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
     status(2)
-    prepare_model()
-    import laya
-    AGENT = laya.load(str(MODEL), device="cpu")
+    try:
+        prepare_model()
+        import laya
+        AGENT = laya.load(str(MODEL), device="cpu")
+    except Exception:
+        status(4)
+        raise
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     status(0)

@@ -22,7 +22,7 @@ From this repository on the computer:
 python laya_q.py setup
 ```
 
-Setup downloads the checkpoint on your computer by default, verifies its SHA256, transfers it over USB, and verifies the board's copy before installing it. `--download-on-host` remains available as an explicit option:
+Setup downloads the current checkpoint on your computer by default, transfers it over USB, and verifies the board's copy before installing it. There is no hardcoded model revision or checksum: each download resolves the latest upstream revision once and reads its verification data from the Hub. `--download-on-host` remains available as an explicit option:
 
 ```powershell
 python laya_q.py setup --download-on-host
@@ -34,9 +34,9 @@ If more than one ADB device is attached, supply `--serial` before the subcommand
 python laya_q.py --serial 116087906 setup
 ```
 
-Setup copies the worker to `/home/arduino/laya-q`, creates a private virtual environment, installs CPU-only PyTorch 2.9.1 and `laya==0.3.20`, and loads the transferred checkpoint from `/home/arduino/laya-q/model`. Python dependencies are installed on the board; checkpoint downloads use your computer's connection. The first setup may take a while. The script downloads the official `get-pip.py` bootstrap into that virtual environment because the stock UNO Q Python image may lack Debian's `python3.13-venv` package. PyTorch 2.10 crashed with an illegal instruction on the tested UNO Q, so the installer pins 2.9.1. The worker disables the Hugging Face Xet downloader because it stalled on this board connection.
+Setup copies the worker to `/home/arduino/laya-q`, creates a private virtual environment, installs CPU-only PyTorch 2.9.1 and `laya==0.3.20`, and loads the transferred checkpoint from `/home/arduino/laya-q/model`. Python dependencies are installed on the board; model downloads always use your computer's connection. The first setup may take a while. The script downloads the official `get-pip.py` bootstrap into that virtual environment because the stock UNO Q Python image may lack Debian's `python3.13-venv` package. PyTorch 2.10 crashed with an illegal instruction on the tested UNO Q, so the installer pins 2.9.1. Board model loading is forced offline to prevent slow fallback downloads.
 
-To transfer the checkpoint without loading it immediately, run `python laya_q.py setup --skip-warmup`. To download from the board instead, use `--download-on-board`; adding `--skip-warmup` in that mode defers the board download until the first prediction.
+To transfer the checkpoint without loading it immediately, run `python laya_q.py setup --skip-warmup`. If the checkpoint is missing, the worker asks you to install it from the computer; it never downloads a model on the UNO Q.
 
 For authentication, ask Python to prompt for your token with hidden input. The token stays in memory for this setup and is not saved to Git, the project, or a board credential file:
 
@@ -88,9 +88,21 @@ The board runs Debian Linux on a Qualcomm processor. ADB over USB is separate fr
 
 ## Arduino App Lab bundle
 
-Download `Laya-Q-App-Lab.zip` from a GitHub release, import it in App Lab, and run **Laya Q**. The ZIP contains the App Lab Python service, STM32 sketch, English checkpoint, example request, and host tools. App Lab installs pinned Python dependencies on the first run, which requires internet access; model inference then uses the included checkpoint. Allow several GB of free storage and use the tested 4 GB UNO Q configuration.
+Download `Laya-Q-App-Lab.zip` from a GitHub release and import it in App Lab. The default ZIP contains the Python service, STM32 sketch, example request, and host tools. Model files live in the app's hidden `.cache/model` directory, keeping them out of the editable project. Allow several GB of free storage and use the tested 4 GB UNO Q configuration.
 
-App Lab limits individual imported file sizes, so the checkpoint is stored as 8 MB pieces. The first run assembles and verifies it in the app cache. The matrix shows a beating heart when ready, an incoming arrow for requests, a scanning animation during inference, a check for returned results, and a flashing X for errors.
+Install the model from your computer after importing the ZIP and before running the app:
+
+```powershell
+python laya_q.py setup --app-lab user:laya-q-app-lab
+```
+
+Replace the app ID with the imported app's ID if App Lab gives it a different name. This downloads the latest model on the computer and transfers the original `model.safetensors` plus matching support files into the app cache. It does not install a second Python runtime. Run or restart **Laya Q** in App Lab afterward. Add `--hf-token` if authentication is needed.
+
+If you skip host installation, the app reports that the model is missing and displays the setup command. It never starts a model download on the UNO Q. Subsequent starts reuse the installed snapshot; run the setup command again while the app is stopped to update it. App Lab installs pinned Python dependencies on first run, which still requires board internet access.
+
+The original safetensors file contains only weights. Laya also requires its tokenizer and configuration files, so these are kept together in the cache. The default ZIP contains no model pieces or tokenizer folders. A fully offline model bundle remains available with `--include-model`; only that optional format splits the weights because [App Lab limits imported files to 100 MiB](https://github.com/arduino/arduino-app-cli/blob/main/internal/orchestrator/archive.go).
+
+The matrix shows a beating heart when ready, an incoming arrow for requests, a scanning animation during inference, a check for returned results, and a flashing X for errors.
 
 Use the imported app's persistent model through USB:
 
@@ -122,7 +134,13 @@ Chrome works with this portal through the Python ADB connection. Direct browser 
 python scripts/build_app_lab.py Laya-Q-App-Lab.zip
 ```
 
-The builder downloads a fixed public model revision, verifies the weights' SHA256, and includes only an explicit list of project files. It needs no Hugging Face token. Model weights and generated ZIPs are ignored by Git.
+The default build is small and needs no model download. For a bundle with an offline model payload:
+
+```powershell
+python scripts/build_app_lab.py Laya-Q-Offline-App-Lab.zip --include-model
+```
+
+The offline builder resolves the current public model revision, downloads its matching support files, and generates verification metadata for that bundle. No checkpoint hash is fixed in source code. `--weights-file <path>` can reuse existing weights if they match the current Hub revision. The builder includes only an explicit list of project files. Model weights and generated ZIPs are ignored by Git. An upstream change to the model's architecture or format may still require a compatible Laya runtime update.
 
 CI runs on pushes to `main` and pull requests. The release workflow publishes `Laya-Q-App-Lab.zip` when a version tag such as `v0.1.0` is pushed. It uses GitHub's built-in workflow token.
 
