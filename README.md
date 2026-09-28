@@ -102,7 +102,7 @@ If you skip host installation, the app reports that the model is missing and dis
 
 The original safetensors file contains only weights. Laya also requires its tokenizer and configuration files, so these are kept together in the cache. The default ZIP contains no model pieces or tokenizer folders. A fully offline model bundle remains available with `--include-model`; only that optional format splits the weights because [App Lab limits imported files to 100 MiB](https://github.com/arduino/arduino-app-cli/blob/main/internal/orchestrator/archive.go).
 
-The matrix shows a beating heart when ready, an incoming arrow for requests, a scanning animation during inference, a check for returned results, and a flashing X for errors.
+The matrix shows a filled heart that expands and contracts with a soft double beat when ready, an incoming arrow for requests, a scanning animation during inference, a check for returned results, and a flashing X for errors.
 
 Use the imported app's persistent model through USB:
 

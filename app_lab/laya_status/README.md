@@ -2,7 +2,7 @@
 
 Import the release ZIP into Arduino App Lab and run this app on a 4 GB UNO Q. Linux runs Laya; the STM32 drives the built-in 8×13 blue LED matrix. The default release contains the app and computer-side tools; model files stay in the hidden app cache.
 
-- Beating heart: ready
+- Expanding and contracting heart with a soft double beat: ready
 - Moving arrow: receiving a request
 - Scanning line: loading or inference
 - Check: result sent

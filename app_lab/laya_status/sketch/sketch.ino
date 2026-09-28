@@ -8,7 +8,46 @@ unsigned long statusSince = 0;
 unsigned long lastFrame = 0;
 
 void pixel(int x, int y) {
-  if (x >= 0 && x < 13 && y >= 0 && y < 8) pixels[y * 13 + x] = 1;
+  if (x >= 0 && x < 13 && y >= 0 && y < 8) pixels[y * 13 + x] = 7;
+}
+
+// Inspired by Arduino's LEDMatrixGallery heartbeat; original 13-column artwork.
+// Blend three sizes using the UNO Q's eight brightness levels.
+const char hearts[3][8][14] = {
+  {
+    ".............", ".............", "....##.##....", "...#######...",
+    "....#####....", ".....###.....", "......#......", "............."
+  },
+  {
+    ".............", "...###.###...", "..#########..", "..#########..",
+    "...#######...", "....#####....", ".....###.....", "......#......"
+  },
+  {
+    "..###...###..", ".#####.#####.", ".###########.", "..#########..",
+    "...#######...", "....#####....", ".....###.....", "......#......"
+  }
+};
+
+void heartbeat(unsigned long elapsed) {
+  // A small beat, a fuller beat, then a relaxed pause. No blocking delays.
+  const uint16_t times[] = {0, 160, 320, 500, 650, 900, 1800};
+  const uint16_t sizes[] = {0, 256, 80, 512, 180, 0, 0};
+  unsigned long phase = elapsed % 1800;
+  int segment = 0;
+  while (phase >= times[segment + 1]) ++segment;
+  float t = float(phase - times[segment]) / (times[segment + 1] - times[segment]);
+  t = t * t * (3.0f - 2.0f * t);  // ease in and out at each beat
+  int size = sizes[segment] + (int(sizes[segment + 1]) - int(sizes[segment])) * t;
+  int from = size < 256 ? 0 : 1;
+  int blend = size - from * 256;
+  int brightness = 3 + (size * 4 + 256) / 512;
+  for (int y = 0; y < 8; ++y) {
+    for (int x = 0; x < 13; ++x) {
+      int coverage = (hearts[from][y][x] == '#' ? 256 - blend : 0)
+                   + (hearts[from + 1][y][x] == '#' ? blend : 0);
+      pixels[y * 13 + x] = (coverage * brightness + 128) / 256;
+    }
+  }
 }
 
 void icon(const char *rows[8]) {
@@ -28,7 +67,7 @@ void layaStatus(int code) {
 
 void setup() {
   matrix.begin();
-  matrix.setGrayscaleBits(1);
+  matrix.setGrayscaleBits(3);
   Bridge.begin();
   Bridge.provide_safe("laya_status", layaStatus);
   statusSince = millis();
@@ -37,18 +76,16 @@ void setup() {
 void loop() {
   unsigned long now = millis();
   unsigned long elapsed = now - statusSince;
-  if (statusCode == 3 && elapsed >= 1300) statusCode = 0;
-  if (statusCode == 4 && elapsed >= 2400) statusCode = 0;
-  if (now - lastFrame < 80) return;
+  if ((statusCode == 3 && elapsed >= 1300) || (statusCode == 4 && elapsed >= 2400)) {
+    layaStatus(0);
+    elapsed = 0;
+  }
+  if (now - lastFrame < 33) return;
   lastFrame = now;
   memset(pixels, 0, sizeof(pixels));
 
-  if (statusCode == 0) {  // a resting heart with a soft beat
-    const char *heart[8] = {
-      ".............", "...##...##...", "..#..#.#..#..", "..#...#...#..",
-      "...#.....#...", "....#...#....", ".....#.#.....", "......#......"
-    };
-    if (elapsed % 1800 < 1350) icon(heart);
+  if (statusCode == 0) {
+    heartbeat(elapsed);
   } else if (statusCode == 1) {  // incoming message moves toward the center
     int shift = (elapsed / 100) % 10;
     for (int y = 2; y <= 5; ++y) pixel(shift, y);

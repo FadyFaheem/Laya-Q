@@ -60,7 +60,8 @@ Both transports accept a JSON object containing `state` (string, object, or list
 ## Matrix and board operations
 
 - Keep the `laya_status` RPC contract synchronized across Python and the sketch: 0 idle, 1 receiving, 2 working, 3 success, 4 error.
-- Current visuals are a beating heart, incoming arrow, scanning line, check, and flashing X respectively. Editable icon rows must have 13 columns and 8 rows.
+- Current visuals are a filled heart with an eased double beat, incoming arrow, scanning line, check, and flashing X respectively. Editable icon rows must have 13 columns and 8 rows.
+- The matrix uses 3-bit grayscale (0?7). Keep ordinary status pixels at 7; idle blends three heart sizes at roughly 30 frames per second.
 - Matrix animation runs on the STM32. Keep updates responsive; avoid long blocking delays in the sketch.
 - `Arduino_LED_Matrix` comes with the tested `arduino:zephyr` platform. Adding it as a separately installed library caused App Lab library resolution failures.
 - Discover the board with ADB; do not hardcode a developer's device serial. `--serial` belongs before the CLI subcommand. `find_adb()` can locate App Lab's bundled ADB on Windows.
